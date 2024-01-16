@@ -5,13 +5,11 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 dotenv.config();
 
+
 const app = express();
 const port = 3000;
 
-const token = process.env.TOKEN_DATO
-const datoUrl = 'https://graphql.datocms.com/'
-
-app.get('/executar', async (req, res) => {
+app.post('/executar', async (req, res) => {
   try {
     await run();
     res.send('Execução concluída!');
@@ -21,7 +19,11 @@ app.get('/executar', async (req, res) => {
   }
 });
 
-const query = `
+async function fetchData() {
+  const token = process.env.TOKEN_DATO;
+  const datoUrl = 'https://graphql.datocms.com/';
+
+  const query = `
   query {
     logoMain{
       logoUrl
@@ -184,75 +186,76 @@ const query = `
   }
 `
 
-async function fetchData() {
-    try {
-        const response = await fetch(datoUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ query }),
-        })
+  try {
+    const response = await fetch(datoUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query }),
+    });
 
-        const data = await response.json()
-        console.log(data.data)
+    const data = await response.json();
+    console.log(data.data);
 
-        const jsonData = JSON.stringify(data.data)
+    const jsonData = JSON.stringify(data.data);
 
-        console.log(jsonData)
+    console.log(jsonData);
 
-        fs.writeFileSync('data.json', jsonData)
-
-    } catch (error) {
-        console.error(error)
-    }
+    await fs.promises.mkdir('/tmp', { recursive: true }); // Cria o diretório /tmp se não existir
+    await fs.promises.writeFile('/tmp/data.json', jsonData);
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
 }
 
 async function uploadS3() {
-    try {
-        const s3 = new AWS.S3({
-            accessKeyId: process.env.ACESSKEYID,
-            secretAccessKey: process.env.SECRETACESSKEY,
-            region: process.env.REGION,
-        })
+  try {
+    const s3 = new AWS.S3({
+      accessKeyId: process.env.ACESSKEYID,
+      secretAccessKey: process.env.SECRETACESSKEY,
+      region: process.env.REGION,
+    });
 
-        const bucketName = process.env.BUCKETNAME
-        const fileName = 'data.json'
+    const bucketName = process.env.BUCKETNAME;
+    const fileName = 'data.json';
 
-        const file = fs.createReadStream('data.json')
+    const file = fs.createReadStream('/tmp/data.json');
 
-        const params = {
-            Bucket: bucketName,
-            Key: fileName,
-            Body: file,
-            ACL: 'public-read'
-        }
+    const params = {
+      Bucket: bucketName,
+      Key: fileName,
+      Body: file,
+      ACL: 'public-read',
+    };
 
-        s3.upload(params, (err, data) => {
-            if (err) {
-                console.log('Erro s3', err)
-            }
+    await s3.upload(params).promise();
 
-            if (data) {
-                console.log('Upload feito!')
-            }
-        })
-
-    } catch (error) {
-        console.log(error)
-    }
+    console.log('Upload feito!');
+    fs.unlink('/tmp/data.json', (unlinkErr) => {
+      if (unlinkErr) {
+        console.error('Erro ao excluir o arquivo:', unlinkErr);
+      } else {
+        console.log('Arquivo temporario excluído com sucesso.');
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
 }
 
-
-async function run () {
-    try {
-        await fetchData()
-        await uploadS3()
-        console.log('Busca e Upload feitos.')
-    } catch (error) {
-        console.log('Run error')
-    }
+async function run() {
+  try {
+    await fetchData();
+    await uploadS3();
+    console.log('Busca e Upload feitos.');
+  } catch (error) {
+    console.log('Run error', error);
+    throw error;
+  }
 }
 
 app.listen(port, () => {
